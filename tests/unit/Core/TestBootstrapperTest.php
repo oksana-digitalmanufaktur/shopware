@@ -6,8 +6,13 @@ namespace Shopware\Tests\Unit\Core;
 
 use Composer\Autoload\ClassLoader;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\PDO\Exception as DbalPdoException;
+use Doctrine\DBAL\Exception\ConnectionException;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Result;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Shopware\Core\Framework\Log\Package;
 use Shopware\Core\Framework\Plugin\KernelPluginLoader\StaticKernelPluginLoader;
@@ -218,6 +223,74 @@ class TestBootstrapperTest extends TestCase
             $bootstrapper->bootstrap();
 
             static::assertNull(KernelLifecycleAccessor::currentKernel(), 'bootstrap() must leave no residual kernel');
+        } finally {
+            KernelLifecycleAccessor::setKernel($previousKernel);
+        }
+    }
+
+    #[DataProvider('missingSchemaExceptionProvider')]
+    public function testBootstrapInstallsWhenSchemaIsMissing(\Exception $exception): void
+    {
+        $kernel = $this->createKernelWithFailingConnection($exception);
+        // booting the kernel is the first step of running the system:install command
+        $kernel->expects($this->once())->method('boot');
+
+        try {
+            $this->bootstrapWithKernel($kernel);
+        } catch (\Throwable $e) {
+            // the stubbed kernel cannot complete the installation, only the attempt matters here
+            static::assertNotSame($exception, $e);
+        }
+    }
+
+    public static function missingSchemaExceptionProvider(): \Generator
+    {
+        yield 'table not found' => [new TableNotFoundException(new DbalPdoException('Table not found', null, 1146), null)];
+        yield 'unknown database' => [new ConnectionException(new DbalPdoException('Unknown database', null, 1049), null)];
+    }
+
+    #[DataProvider('unrelatedExceptionProvider')]
+    public function testBootstrapRethrowsUnrelatedExceptionsInsteadOfInstalling(\Exception $exception): void
+    {
+        $kernel = $this->createKernelWithFailingConnection($exception);
+        $kernel->expects($this->never())->method('boot');
+
+        $this->expectExceptionObject($exception);
+
+        $this->bootstrapWithKernel($kernel);
+    }
+
+    public static function unrelatedExceptionProvider(): \Generator
+    {
+        yield 'access denied' => [new ConnectionException(new DbalPdoException('Access denied', null, 1045), null)];
+        yield 'missing env variable' => [new \RuntimeException('Environment variable not found: "APP_SECRET".')];
+    }
+
+    private function createKernelWithFailingConnection(\Exception $exception): Kernel&MockObject
+    {
+        $connection = static::createStub(Connection::class);
+        $connection->method('executeQuery')->willThrowException($exception);
+
+        $container = static::createStub(ContainerInterface::class);
+        $container->method('get')->willReturn($connection);
+
+        $kernel = $this->createMock(Kernel::class);
+        $kernel->method('getContainer')->willReturn($container);
+
+        return $kernel;
+    }
+
+    private function bootstrapWithKernel(Kernel $kernel): void
+    {
+        $previousKernel = KernelLifecycleAccessor::currentKernel();
+        KernelLifecycleAccessor::setKernel($kernel);
+
+        try {
+            (new TestBootstrapper())
+                ->setClassLoader(static::createStub(ClassLoader::class))
+                ->setDatabaseUrl('mysql://irrelevant')
+                ->setLoadEnvFile(false)
+                ->bootstrap();
         } finally {
             KernelLifecycleAccessor::setKernel($previousKernel);
         }

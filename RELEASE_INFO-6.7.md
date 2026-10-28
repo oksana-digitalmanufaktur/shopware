@@ -47,6 +47,12 @@ The update to 6.7.7.0 only filled it for the first 5000 digital and 5000 physica
 Values that are already set are kept.
 Extensions and integrations that read the product type of older order line items can use `payload.productType` instead of `states`, which is removed in 6.8.
 
+### `TestBootstrapper` no longer reinstalls the test database on unrelated errors
+
+`TestBootstrapper::bootstrap()` now only installs the test database when the database or its `plugin` table does not exist.
+Other errors during the check, such as a missing environment variable or wrong database credentials, are thrown instead of triggering a reinstall over the existing database.
+If your plugin's test bootstrap now fails with such an error, fix the reported configuration.
+
 ## API
 
 ### Criteria on fields the API does not expose is a bad request

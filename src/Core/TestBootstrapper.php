@@ -4,6 +4,8 @@ namespace Shopware\Core;
 
 use Composer\Autoload\ClassLoader;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\DriverException;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use Shopware\Core\DevOps\StaticAnalyze\StaticAnalyzeKernel;
 use Shopware\Core\Framework\Adapter\Kernel\KernelFactory;
 use Shopware\Core\Framework\Log\Package;
@@ -447,7 +449,15 @@ class TestBootstrapper
             $connection->executeQuery('SELECT 1 FROM `plugin` LIMIT 1')->fetchAllAssociative();
 
             return true;
-        } catch (\Throwable) {
+        } catch (TableNotFoundException) {
+            return false;
+        } catch (DriverException $e) {
+            // Unknown database https://dev.mysql.com/doc/mysql-errors/8.4/en/server-error-reference.html#error_er_bad_db_error
+            // Any other error (e.g. missing env variables, wrong credentials) must not trigger a reinstall
+            if ($e->getCode() !== 1049) {
+                throw $e;
+            }
+
             return false;
         }
     }
